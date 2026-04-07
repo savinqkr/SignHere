@@ -4,7 +4,7 @@ import { use, useEffect, useState, useRef } from "react";
 import { getSession, updateSessionSignature, isSessionExpired } from "@/lib/session";
 import { downloadFile, uploadSignedPdf } from "@/lib/storage";
 import { embedSignatureIntoPdf } from "@/lib/pdfUtils";
-import { Session } from "@/types/contract";
+import { Session, getFileCategory } from "@/types/contract";
 import dynamic from "next/dynamic";
 
 const SignaturePad = dynamic(() => import("@/components/SignaturePad"), { ssr: false });
@@ -58,7 +58,9 @@ export default function SignPage({ params }: Props) {
   }
 
   async function renderContract(s: Session) {
-    if (s.file_type === "pdf") {
+    const category = getFileCategory(s.file_type);
+
+    if (category === "pdf") {
       const pdfjsLib = await import("pdfjs-dist");
       pdfjsLib.GlobalWorkerOptions.workerSrc =
         `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
@@ -78,12 +80,13 @@ export default function SignPage({ params }: Props) {
         pages.push(canvas.toDataURL());
       }
       setPdfPages(pages);
-    } else {
+    } else if (category === "docx") {
       const ab = await downloadFile(s.file_url);
       const mammoth = (await import("mammoth")).default;
       const result = await mammoth.convertToHtml({ arrayBuffer: ab });
       setDocxHtml(result.value);
     }
+    // image & other: rendered directly from file_url in JSX
   }
 
   async function handleSignatureSave(dataUrl: string) {
@@ -94,27 +97,57 @@ export default function SignPage({ params }: Props) {
     try {
       let url: string;
 
-      if (session.file_type === "pdf") {
+      const category = getFileCategory(session.file_type);
+
+      if (category === "pdf") {
+        // Embed signature directly into the existing PDF
         const pdfAb = await downloadFile(session.file_url);
-        const signed = await embedSignatureIntoPdf(
-          pdfAb, dataUrl, session.sign_position
-        );
+        const signed = await embedSignatureIntoPdf(pdfAb, dataUrl, session.sign_position);
         url = await uploadSignedPdf(signed as Uint8Array<ArrayBuffer>, session.id);
+      } else if (category === "image") {
+        // Create a PDF from the image + overlay the signature
+        const { PDFDocument } = await import("pdf-lib");
+        const imgAb = await downloadFile(session.file_url);
+        const pdfDoc = await PDFDocument.create();
+        const imgType = session.file_type.toLowerCase();
+        const embeddedImg = imgType === "png"
+          ? await pdfDoc.embedPng(imgAb)
+          : await pdfDoc.embedJpg(imgAb);
+        const { width: iw, height: ih } = embeddedImg;
+        const page = pdfDoc.addPage([iw, ih]);
+        page.drawImage(embeddedImg, { x: 0, y: 0, width: iw, height: ih });
+        // Embed signature using stored render dimensions
+        const b64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
+        const sigBytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        const sigImg = await pdfDoc.embedPng(sigBytes);
+        const sp = session.sign_position;
+        const sx = iw / sp.renderWidth;
+        const sy = ih / sp.renderHeight;
+        page.drawImage(sigImg, {
+          x: sp.x * sx,
+          y: ih - sp.y * sy - sp.height * sy,
+          width: sp.width * sx,
+          height: sp.height * sy,
+        });
+        const bytes = await pdfDoc.save();
+        url = await uploadSignedPdf(bytes as Uint8Array<ArrayBuffer>, session.id);
       } else {
+        // DOCX / other: create a simple PDF with the signature on a blank A4 page
         const { PDFDocument } = await import("pdf-lib");
         const pdfDoc = await PDFDocument.create();
         const page = pdfDoc.addPage([595, 842]);
-        page.drawText("서명된 계약서 (원본: DOCX)", { x: 50, y: 800, size: 12 });
+        page.drawText(`서명된 계약서 (원본: ${session.file_name})`, { x: 50, y: 800, size: 11 });
         const b64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
-        const imgBytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-        const img = await pdfDoc.embedPng(imgBytes);
+        const sigBytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        const sigImg = await pdfDoc.embedPng(sigBytes);
         const sp = session.sign_position;
-        const sx = 595 / (sp.width + sp.x + 50);
-        page.drawImage(img, {
+        const sx = 595 / sp.renderWidth;
+        const sy = 842 / sp.renderHeight;
+        page.drawImage(sigImg, {
           x: sp.x * sx,
-          y: 842 - sp.y * sx - sp.height * sx,
+          y: 842 - sp.y * sy - sp.height * sy,
           width: sp.width * sx,
-          height: sp.height * sx,
+          height: sp.height * sy,
         });
         const bytes = await pdfDoc.save();
         url = await uploadSignedPdf(bytes as Uint8Array<ArrayBuffer>, session.id);
@@ -222,23 +255,55 @@ export default function SignPage({ params }: Props) {
 
         {/* Document */}
         <div ref={viewerRef} className="px-2 py-4">
-          {session?.file_type === "pdf" && pdfPages.length > 0 ? (
-            pdfPages.map((src, i) => (
-              <div key={i} className="mb-4 shadow-md rounded-lg overflow-hidden">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={src} alt={`페이지 ${i + 1}`} className="w-full" />
+          {(() => {
+            const cat = session ? getFileCategory(session.file_type) : "other";
+            if (cat === "pdf" && pdfPages.length > 0) {
+              return pdfPages.map((src, i) => (
+                <div key={i} className="mb-4 shadow-md rounded-lg overflow-hidden">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={src} alt={`페이지 ${i + 1}`} className="w-full" />
+                </div>
+              ));
+            }
+            if (cat === "docx" && docxHtml) {
+              return (
+                <div
+                  className="bg-white rounded-xl shadow-sm p-5 prose max-w-none text-sm"
+                  dangerouslySetInnerHTML={{ __html: docxHtml }}
+                />
+              );
+            }
+            if (cat === "image" && session?.file_url) {
+              return (
+                <div className="shadow-md rounded-lg overflow-hidden">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={session.file_url} alt="계약서" className="w-full" />
+                </div>
+              );
+            }
+            if (cat === "other" && session?.file_url) {
+              return (
+                <div className="bg-white rounded-xl shadow-sm p-6 text-center">
+                  <p className="text-4xl mb-3">📄</p>
+                  <p className="text-sm font-medium text-gray-700 mb-2">{session.file_name}</p>
+                  <p className="text-xs text-gray-400 mb-4">이 파일 형식은 브라우저에서 미리볼 수 없습니다.</p>
+                  <a
+                    href={session.file_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-blue-600 underline"
+                  >
+                    파일 열기 / 다운로드
+                  </a>
+                </div>
+              );
+            }
+            return (
+              <div className="flex items-center justify-center h-64">
+                <p className="text-gray-400 text-sm animate-pulse">문서 렌더링 중...</p>
               </div>
-            ))
-          ) : docxHtml ? (
-            <div
-              className="bg-white rounded-xl shadow-sm p-5 prose max-w-none text-sm"
-              dangerouslySetInnerHTML={{ __html: docxHtml }}
-            />
-          ) : (
-            <div className="flex items-center justify-center h-64">
-              <p className="text-gray-400 text-sm animate-pulse">문서 렌더링 중...</p>
-            </div>
-          )}
+            );
+          })()}
         </div>
 
         {/* Bottom CTA */}
