@@ -28,8 +28,12 @@ function DashboardContent() {
   async function handleDelete(id: string) {
     if (!confirm("이 계약서를 삭제하시겠습니까?")) return;
     setDeletingId(id);
-    await getSupabase().from("sessions").delete().eq("id", id);
-    setSessions((prev) => prev.filter((s) => s.id !== id));
+    const { error } = await getSupabase().from("sessions").delete().eq("id", id);
+    if (error) {
+      alert("삭제 실패: " + error.message);
+    } else {
+      setSessions((prev) => prev.filter((s) => s.id !== id));
+    }
     setDeletingId(null);
   }
 
