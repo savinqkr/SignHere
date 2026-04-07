@@ -118,7 +118,10 @@ function HomeContent() {
     if (!isDragging || !dragRect) return;
     setIsDragging(false);
     if (dragRect.width > 20 && dragRect.height > 10) {
-      setSignPosition({ page: currentPage, ...dragRect });
+      const img = canvasContainerRef.current?.querySelector("img");
+      const renderWidth = img?.clientWidth ?? canvasContainerRef.current?.clientWidth ?? 1;
+      const renderHeight = img?.clientHeight ?? canvasContainerRef.current?.clientHeight ?? 1;
+      setSignPosition({ page: currentPage, ...dragRect, renderWidth, renderHeight });
     }
     setDragStart(null);
   }
@@ -148,7 +151,10 @@ function HomeContent() {
     if (!isDragging || !dragRect) return;
     setIsDragging(false);
     if (dragRect.width > 20 && dragRect.height > 10) {
-      setSignPosition({ page: currentPage, ...dragRect });
+      const img = canvasContainerRef.current?.querySelector("img");
+      const renderWidth = img?.clientWidth ?? canvasContainerRef.current?.clientWidth ?? 1;
+      const renderHeight = img?.clientHeight ?? canvasContainerRef.current?.clientHeight ?? 1;
+      setSignPosition({ page: currentPage, ...dragRect, renderWidth, renderHeight });
     }
     setDragStart(null);
   }

@@ -67,7 +67,11 @@ export default function SignPlaceholder({
     setDragging(false);
     dragRef.current = null;
     if (rect.width > 20 && rect.height > 10) {
-      onPositionSet({ page: currentPage, ...rect });
+      const el = containerRef.current;
+      const img = el?.querySelector("img");
+      const renderWidth = img?.clientWidth ?? el?.clientWidth ?? 1;
+      const renderHeight = img?.clientHeight ?? el?.clientHeight ?? 1;
+      onPositionSet({ page: currentPage, ...rect, renderWidth, renderHeight });
     }
   }
 
@@ -98,7 +102,11 @@ export default function SignPlaceholder({
     setDragging(false);
     dragRef.current = null;
     if (rect.width > 20 && rect.height > 10) {
-      onPositionSet({ page: currentPage, ...rect });
+      const el = containerRef.current;
+      const img = el?.querySelector("img");
+      const renderWidth = img?.clientWidth ?? el?.clientWidth ?? 1;
+      const renderHeight = img?.clientHeight ?? el?.clientHeight ?? 1;
+      onPositionSet({ page: currentPage, ...rect, renderWidth, renderHeight });
     }
   }
 

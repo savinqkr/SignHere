@@ -28,7 +28,6 @@ export default function SignPage({ params }: Props) {
 
   const [pdfPages, setPdfPages] = useState<string[]>([]);
   const [docxHtml, setDocxHtml] = useState<string | null>(null);
-  const [pageDimensions, setPageDimensions] = useState({ width: 0, height: 0 });
 
   const [signedFileUrl, setSignedFileUrl] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
@@ -77,7 +76,6 @@ export default function SignPage({ params }: Props) {
         canvas.height = viewport.height;
         await page.render({ canvasContext: canvas.getContext("2d")!, viewport }).promise;
         pages.push(canvas.toDataURL());
-        if (i === 1) setPageDimensions({ width: viewport.width, height: viewport.height });
       }
       setPdfPages(pages);
     } else {
@@ -99,8 +97,7 @@ export default function SignPage({ params }: Props) {
       if (session.file_type === "pdf") {
         const pdfAb = await downloadFile(session.file_url);
         const signed = await embedSignatureIntoPdf(
-          pdfAb, dataUrl, session.sign_position,
-          pageDimensions.width, pageDimensions.height
+          pdfAb, dataUrl, session.sign_position
         );
         url = await uploadSignedPdf(signed as Uint8Array<ArrayBuffer>, session.id);
       } else {

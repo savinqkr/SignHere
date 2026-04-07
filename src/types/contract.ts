@@ -4,6 +4,10 @@ export interface SignPosition {
   y: number;
   width: number;
   height: number;
+  /** Width of the displayed image at the time the position was dragged (px) */
+  renderWidth: number;
+  /** Height of the displayed image at the time the position was dragged (px) */
+  renderHeight: number;
 }
 
 export interface Session {
