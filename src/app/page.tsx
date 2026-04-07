@@ -268,7 +268,32 @@ function HomeContent() {
             <p className="text-xs text-gray-400 mt-1">PDF, DOCX 지원</p>
           </div>
           <input ref={fileInputRef} type="file" accept=".pdf,.docx" className="hidden" onChange={handleFileChange} />
-          {loading && <div className="mt-4 text-center text-sm text-gray-500 animate-pulse">미리보기 렌더링 중...</div>}
+          {loading && (
+            <div className="mt-4 text-center text-sm text-gray-500 animate-pulse">미리보기 렌더링 중...</div>
+          )}
+
+          {file && !loading && (
+            <div className="mt-4 flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-200">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-lg shrink-0">{fileExt === "pdf" ? "📄" : "📝"}</span>
+                <span className="text-sm text-gray-700 truncate">{file.name}</span>
+              </div>
+              <button
+                onClick={() => {
+                  setFile(null);
+                  setFileExt("pdf");
+                  setPdfPages([]);
+                  setImageDataUrl(null);
+                  setSignPositions([]);
+                  setError(null);
+                  if (fileInputRef.current) fileInputRef.current.value = "";
+                }}
+                className="ml-3 shrink-0 text-xs text-red-400 hover:text-red-600 border border-red-200 hover:border-red-400 px-2.5 py-1 rounded-lg transition-colors"
+              >
+                파일 변경
+              </button>
+            </div>
+          )}
         </div>
       )}
 
