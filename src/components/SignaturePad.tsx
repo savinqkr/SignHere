@@ -6,9 +6,10 @@ import SignaturePadLib from "signature_pad";
 interface SignaturePadProps {
   onSave: (dataUrl: string) => void;
   onClose: () => void;
+  label?: string; // e.g. "서명 1 / 3"
 }
 
-export default function SignaturePad({ onSave, onClose }: SignaturePadProps) {
+export default function SignaturePad({ onSave, onClose, label }: SignaturePadProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const padRef = useRef<SignaturePadLib | null>(null);
   const [isEmpty, setIsEmpty] = useState(true);
@@ -93,7 +94,9 @@ export default function SignaturePad({ onSave, onClose }: SignaturePadProps) {
         >
           취소
         </button>
-        <h2 className="text-base font-semibold text-gray-800">서명하기</h2>
+        <h2 className="text-base font-semibold text-gray-800">
+          {label ? `서명하기 (${label})` : "서명하기"}
+        </h2>
         <button
           onClick={handleClear}
           className="text-gray-500 text-sm font-medium px-3 py-1.5 rounded border border-gray-300 hover:bg-gray-100 active:bg-gray-200"

@@ -11,8 +11,8 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
       file_url: input.file_url,
       file_name: input.file_name,
       file_type: input.file_type,
-      sign_position: input.sign_position,
-      signature_image: null,
+      sign_positions: input.sign_positions,
+      signature_images: [],
       status: "pending",
       signed_file_url: null,
       expires_at: expiresAt.toISOString(),
@@ -35,15 +35,15 @@ export async function getSession(id: string): Promise<Session | null> {
   return data as Session;
 }
 
-export async function updateSessionSignature(
+export async function updateSessionSignatures(
   id: string,
-  signatureImage: string,
+  signatureImages: string[],
   signedFileUrl: string
 ): Promise<void> {
   const { error } = await getSupabase()
     .from("sessions")
     .update({
-      signature_image: signatureImage,
+      signature_images: signatureImages,
       signed_file_url: signedFileUrl,
       status: "signed",
     })

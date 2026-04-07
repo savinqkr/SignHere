@@ -71,7 +71,7 @@ export default function SignPlaceholder({
       const img = el?.querySelector("img");
       const renderWidth = img?.clientWidth ?? el?.clientWidth ?? 1;
       const renderHeight = img?.clientHeight ?? el?.clientHeight ?? 1;
-      onPositionSet({ page: currentPage, ...rect, renderWidth, renderHeight });
+      onPositionSet({ id: crypto.randomUUID(), page: currentPage, ...rect, renderWidth, renderHeight });
     }
   }
 
@@ -106,7 +106,7 @@ export default function SignPlaceholder({
       const img = el?.querySelector("img");
       const renderWidth = img?.clientWidth ?? el?.clientWidth ?? 1;
       const renderHeight = img?.clientHeight ?? el?.clientHeight ?? 1;
-      onPositionSet({ page: currentPage, ...rect, renderWidth, renderHeight });
+      onPositionSet({ id: crypto.randomUUID(), page: currentPage, ...rect, renderWidth, renderHeight });
     }
   }
 

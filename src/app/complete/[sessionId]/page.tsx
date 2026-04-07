@@ -107,15 +107,16 @@ export default function CompletePage({ params }: Props) {
             <p className="text-xs text-gray-400 mb-8">{session.file_name}</p>
           )}
 
-          {session?.signature_image && (
-            <div className="mb-8 flex flex-col items-center">
-              <p className="text-xs text-gray-400 mb-2">서명 미리보기</p>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={session.signature_image}
-                alt="서명"
-                className="max-w-48 border border-gray-200 rounded-lg shadow-sm bg-white"
-              />
+          {session?.signature_images && session.signature_images.length > 0 && (
+            <div className="mb-8 flex flex-col items-center gap-2">
+              <p className="text-xs text-gray-400">서명 미리보기</p>
+              <div className="flex flex-wrap justify-center gap-2">
+                {session.signature_images.map((sig, i) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img key={i} src={sig} alt={`서명 ${i + 1}`}
+                    className="max-w-36 border border-gray-200 rounded-lg shadow-sm bg-white" />
+                ))}
+              </div>
             </div>
           )}
 

@@ -1,4 +1,5 @@
 export interface SignPosition {
+  id: string;   // client-side unique id for list management
   page: number;
   x: number;
   y: number;
@@ -16,9 +17,9 @@ export interface Session {
   id: string;
   file_url: string;
   file_name: string;
-  file_type: string; // actual file extension, e.g. "pdf", "docx", "jpg", "xlsx"
-  sign_position: SignPosition;
-  signature_image: string | null;
+  file_type: string;
+  sign_positions: SignPosition[];  // array of sign areas
+  signature_images: string[];      // base64 per position (index-aligned)
   status: "pending" | "signed";
   signed_file_url: string | null;
   created_at: string;
@@ -29,7 +30,7 @@ export interface CreateSessionInput {
   file_url: string;
   file_name: string;
   file_type: string;
-  sign_position: SignPosition;
+  sign_positions: SignPosition[];
 }
 
 export function getFileCategory(fileType: string): FileCategory {

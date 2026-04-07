@@ -2,46 +2,44 @@ import { PDFDocument } from "pdf-lib";
 import { SignPosition } from "@/types/contract";
 
 /**
- * Embeds a base64 signature image into the PDF at the specified position.
+ * Embeds multiple signature images into the PDF at their respective positions.
+ * signPositions and signatureBase64s are index-aligned arrays.
  *
- * signPosition.x/y/width/height are in the coordinate space of the displayed
- * image at the time the admin dragged the sign box (stored as renderWidth ×
- * renderHeight pixels).  We scale those into PDF user-space units.
- *
- * pdf-lib's coordinate origin is bottom-left; the browser's is top-left, so
- * we flip the Y axis.
+ * Coordinate mapping:
+ *  - x/y/width/height are in the displayed image's pixel space at drag time
+ *  - renderWidth/renderHeight are the displayed image dimensions at that time
+ *  - pdf-lib uses bottom-left origin, so we flip the Y axis
  */
-export async function embedSignatureIntoPdf(
+export async function embedSignaturesIntoPdf(
   pdfBytes: ArrayBuffer,
-  signatureBase64: string,
-  signPosition: SignPosition
+  signatureBase64s: string[],
+  signPositions: SignPosition[]
 ): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.load(pdfBytes);
   const pages = pdfDoc.getPages();
-  const targetPage = pages[Math.max(0, signPosition.page - 1)] ?? pages[0];
-  const { width: pageWidth, height: pageHeight } = targetPage.getSize();
 
-  // Strip data-URL prefix and decode to bytes
-  const base64Data = signatureBase64.replace(/^data:image\/\w+;base64,/, "");
-  const signatureBytes = Uint8Array.from(atob(base64Data), (c) => c.charCodeAt(0));
-  const signatureImage = await pdfDoc.embedPng(signatureBytes);
+  for (let i = 0; i < signPositions.length; i++) {
+    const sp = signPositions[i];
+    const sig = signatureBase64s[i];
+    if (!sig) continue;
 
-  // Scale: displayed render pixels → PDF user-space units
-  const scaleX = pageWidth  / signPosition.renderWidth;
-  const scaleY = pageHeight / signPosition.renderHeight;
+    const targetPage = pages[Math.max(0, sp.page - 1)] ?? pages[0];
+    const { width: pageWidth, height: pageHeight } = targetPage.getSize();
 
-  const pdfX      = signPosition.x      * scaleX;
-  const pdfWidth  = signPosition.width  * scaleX;
-  const pdfHeight = signPosition.height * scaleY;
-  // Flip Y: pdf-lib y=0 is at the bottom of the page
-  const pdfY = pageHeight - signPosition.y * scaleY - pdfHeight;
+    const base64Data = sig.replace(/^data:image\/\w+;base64,/, "");
+    const sigBytes = Uint8Array.from(atob(base64Data), (c) => c.charCodeAt(0));
+    const sigImage = await pdfDoc.embedPng(sigBytes);
 
-  targetPage.drawImage(signatureImage, {
-    x: pdfX,
-    y: pdfY,
-    width: pdfWidth,
-    height: pdfHeight,
-  });
+    const scaleX = pageWidth  / sp.renderWidth;
+    const scaleY = pageHeight / sp.renderHeight;
+
+    targetPage.drawImage(sigImage, {
+      x:      sp.x      * scaleX,
+      y:      pageHeight - sp.y * scaleY - sp.height * scaleY,
+      width:  sp.width  * scaleX,
+      height: sp.height * scaleY,
+    });
+  }
 
   return pdfDoc.save();
 }

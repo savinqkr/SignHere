@@ -1,10 +1,10 @@
 "use client";
 
 import { use, useEffect, useState, useRef } from "react";
-import { getSession, updateSessionSignature, isSessionExpired } from "@/lib/session";
+import { getSession, updateSessionSignatures, isSessionExpired } from "@/lib/session";
 import { downloadFile, uploadSignedPdf } from "@/lib/storage";
-import { embedSignatureIntoPdf } from "@/lib/pdfUtils";
-import { Session, getFileCategory } from "@/types/contract";
+import { embedSignaturesIntoPdf } from "@/lib/pdfUtils";
+import { Session, SignPosition, getFileCategory } from "@/types/contract";
 import dynamic from "next/dynamic";
 
 const SignaturePad = dynamic(() => import("@/components/SignaturePad"), { ssr: false });
@@ -23,11 +23,15 @@ export default function SignPage({ params }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const [step, setStep] = useState<Step>("view");
-  const [showPad, setShowPad] = useState(false);
   const [signing, setSigning] = useState(false);
 
   const [pdfPages, setPdfPages] = useState<string[]>([]);
   const [docxHtml, setDocxHtml] = useState<string | null>(null);
+
+  // Multi-sign: track which position index we're currently signing
+  const [currentSignIdx, setCurrentSignIdx] = useState(0);
+  const [showPad, setShowPad] = useState(false);
+  const [collectedSignatures, setCollectedSignatures] = useState<string[]>([]);
 
   const [signedFileUrl, setSignedFileUrl] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
@@ -86,26 +90,42 @@ export default function SignPage({ params }: Props) {
       const result = await mammoth.convertToHtml({ arrayBuffer: ab });
       setDocxHtml(result.value);
     }
-    // image & other: rendered directly from file_url in JSX
+    // image & other: rendered from file_url directly
   }
 
+  // Called when user finishes one signature pad
   async function handleSignatureSave(dataUrl: string) {
     if (!session) return;
-    setSigning(true);
+    const updated = [...collectedSignatures];
+    updated[currentSignIdx] = dataUrl;
+    setCollectedSignatures(updated);
     setShowPad(false);
 
+    const totalPositions = session.sign_positions.length;
+    const nextIdx = currentSignIdx + 1;
+
+    if (nextIdx < totalPositions) {
+      // Move to next sign area
+      setCurrentSignIdx(nextIdx);
+      setShowPad(true);
+    } else {
+      // All signatures collected — embed and upload
+      await finalize(updated);
+    }
+  }
+
+  async function finalize(signatures: string[]) {
+    if (!session) return;
+    setSigning(true);
     try {
       let url: string;
-
       const category = getFileCategory(session.file_type);
 
       if (category === "pdf") {
-        // Embed signature directly into the existing PDF
         const pdfAb = await downloadFile(session.file_url);
-        const signed = await embedSignatureIntoPdf(pdfAb, dataUrl, session.sign_position);
+        const signed = await embedSignaturesIntoPdf(pdfAb, signatures, session.sign_positions);
         url = await uploadSignedPdf(signed as Uint8Array<ArrayBuffer>, session.id);
       } else if (category === "image") {
-        // Create a PDF from the image + overlay the signature
         const { PDFDocument } = await import("pdf-lib");
         const imgAb = await downloadFile(session.file_url);
         const pdfDoc = await PDFDocument.create();
@@ -116,44 +136,50 @@ export default function SignPage({ params }: Props) {
         const { width: iw, height: ih } = embeddedImg;
         const page = pdfDoc.addPage([iw, ih]);
         page.drawImage(embeddedImg, { x: 0, y: 0, width: iw, height: ih });
-        // Embed signature using stored render dimensions
-        const b64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
-        const sigBytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-        const sigImg = await pdfDoc.embedPng(sigBytes);
-        const sp = session.sign_position;
-        const sx = iw / sp.renderWidth;
-        const sy = ih / sp.renderHeight;
-        page.drawImage(sigImg, {
-          x: sp.x * sx,
-          y: ih - sp.y * sy - sp.height * sy,
-          width: sp.width * sx,
-          height: sp.height * sy,
-        });
+        for (let i = 0; i < session.sign_positions.length; i++) {
+          const sp = session.sign_positions[i];
+          const sig = signatures[i];
+          if (!sig) continue;
+          const b64 = sig.replace(/^data:image\/\w+;base64,/, "");
+          const sigBytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+          const sigImg = await pdfDoc.embedPng(sigBytes);
+          const sx = iw / sp.renderWidth;
+          const sy = ih / sp.renderHeight;
+          page.drawImage(sigImg, {
+            x: sp.x * sx,
+            y: ih - sp.y * sy - sp.height * sy,
+            width: sp.width * sx,
+            height: sp.height * sy,
+          });
+        }
         const bytes = await pdfDoc.save();
         url = await uploadSignedPdf(bytes as Uint8Array<ArrayBuffer>, session.id);
       } else {
-        // DOCX / other: create a simple PDF with the signature on a blank A4 page
         const { PDFDocument } = await import("pdf-lib");
         const pdfDoc = await PDFDocument.create();
         const page = pdfDoc.addPage([595, 842]);
         page.drawText(`서명된 계약서 (원본: ${session.file_name})`, { x: 50, y: 800, size: 11 });
-        const b64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
-        const sigBytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-        const sigImg = await pdfDoc.embedPng(sigBytes);
-        const sp = session.sign_position;
-        const sx = 595 / sp.renderWidth;
-        const sy = 842 / sp.renderHeight;
-        page.drawImage(sigImg, {
-          x: sp.x * sx,
-          y: 842 - sp.y * sy - sp.height * sy,
-          width: sp.width * sx,
-          height: sp.height * sy,
-        });
+        for (let i = 0; i < session.sign_positions.length; i++) {
+          const sp = session.sign_positions[i];
+          const sig = signatures[i];
+          if (!sig) continue;
+          const b64 = sig.replace(/^data:image\/\w+;base64,/, "");
+          const sigBytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+          const sigImg = await pdfDoc.embedPng(sigBytes);
+          const sx = 595 / sp.renderWidth;
+          const sy = 842 / sp.renderHeight;
+          page.drawImage(sigImg, {
+            x: sp.x * sx,
+            y: 842 - sp.y * sy - sp.height * sy,
+            width: sp.width * sx,
+            height: sp.height * sy,
+          });
+        }
         const bytes = await pdfDoc.save();
         url = await uploadSignedPdf(bytes as Uint8Array<ArrayBuffer>, session.id);
       }
 
-      await updateSessionSignature(session.id, dataUrl, url);
+      await updateSessionSignatures(session.id, signatures, url);
       setSignedFileUrl(url);
       setStep("done");
     } catch (err) {
@@ -177,6 +203,12 @@ export default function SignPage({ params }: Props) {
     } finally {
       setDownloading(false);
     }
+  }
+
+  function startSigning() {
+    setCurrentSignIdx(0);
+    setCollectedSignatures([]);
+    setShowPad(true);
   }
 
   // ── Loading / Error ──────────────────────────────────────────────────────────
@@ -214,12 +246,8 @@ export default function SignPage({ params }: Props) {
           {downloading ? "다운로드 중..." : "📥 서명된 PDF 다운로드"}
         </button>
         {signedFileUrl && (
-          <a
-            href={signedFileUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-3 w-full max-w-xs py-3 bg-gray-100 text-gray-700 font-medium rounded-xl text-sm text-center block hover:bg-gray-200"
-          >
+          <a href={signedFileUrl} target="_blank" rel="noopener noreferrer"
+            className="mt-3 w-full max-w-xs py-3 bg-gray-100 text-gray-700 font-medium rounded-xl text-sm text-center block hover:bg-gray-200">
             브라우저에서 열기
           </a>
         )}
@@ -227,13 +255,17 @@ export default function SignPage({ params }: Props) {
     );
   }
 
+  const totalPositions = session?.sign_positions.length ?? 0;
+
   // ── Step: view / sign ────────────────────────────────────────────────────────
   return (
     <>
+      {/* Signature Pad overlay — shown once per sign area */}
       {showPad && (
         <SignaturePad
+          label={totalPositions > 1 ? `서명 ${currentSignIdx + 1} / ${totalPositions}` : undefined}
           onSave={handleSignatureSave}
-          onClose={() => setShowPad(false)}
+          onClose={() => { setShowPad(false); setSigning(false); }}
         />
       )}
 
@@ -248,7 +280,9 @@ export default function SignPage({ params }: Props) {
         <div className="flex items-center gap-2 px-4 py-3 bg-blue-50 border-b border-blue-100 text-xs text-blue-700">
           <span className={step === "view" ? "font-bold" : "opacity-50"}>① 계약서 확인</span>
           <span className="opacity-40">→</span>
-          <span className={step === "sign" ? "font-bold" : "opacity-50"}>② 서명</span>
+          <span className={step === "sign" ? "font-bold" : "opacity-50"}>
+            ② 서명{totalPositions > 1 ? ` (${totalPositions}곳)` : ""}
+          </span>
           <span className="opacity-40">→</span>
           <span className="opacity-50">③ 다운로드</span>
         </div>
@@ -267,10 +301,8 @@ export default function SignPage({ params }: Props) {
             }
             if (cat === "docx" && docxHtml) {
               return (
-                <div
-                  className="bg-white rounded-xl shadow-sm p-5 prose max-w-none text-sm"
-                  dangerouslySetInnerHTML={{ __html: docxHtml }}
-                />
+                <div className="bg-white rounded-xl shadow-sm p-5 prose max-w-none text-sm"
+                  dangerouslySetInnerHTML={{ __html: docxHtml }} />
               );
             }
             if (cat === "image" && session?.file_url) {
@@ -285,14 +317,9 @@ export default function SignPage({ params }: Props) {
               return (
                 <div className="bg-white rounded-xl shadow-sm p-6 text-center">
                   <p className="text-4xl mb-3">📄</p>
-                  <p className="text-sm font-medium text-gray-700 mb-2">{session.file_name}</p>
+                  <p className="text-sm font-medium text-gray-700 mb-2">{session?.file_name}</p>
                   <p className="text-xs text-gray-400 mb-4">이 파일 형식은 브라우저에서 미리볼 수 없습니다.</p>
-                  <a
-                    href={session.file_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm text-blue-600 underline"
-                  >
+                  <a href={session.file_url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 underline">
                     파일 열기 / 다운로드
                   </a>
                 </div>
@@ -310,29 +337,26 @@ export default function SignPage({ params }: Props) {
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-4 py-4 z-20">
           {step === "view" ? (
             <>
-              <button
-                onClick={() => setStep("sign")}
-                className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-base rounded-xl shadow-lg"
-              >
+              <button onClick={() => setStep("sign")}
+                className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-base rounded-xl shadow-lg">
                 계약서를 모두 읽었습니다 →
               </button>
-              <p className="text-center text-xs text-gray-400 mt-2">
-                계약서를 끝까지 스크롤하여 내용을 확인하세요
-              </p>
+              <p className="text-center text-xs text-gray-400 mt-2">계약서를 끝까지 스크롤하여 내용을 확인하세요</p>
             </>
           ) : (
             <>
               <button
-                onClick={() => setShowPad(true)}
+                onClick={startSigning}
                 disabled={signing}
                 className="w-full py-3.5 bg-green-600 hover:bg-green-700 active:bg-green-800 text-white font-semibold text-base rounded-xl shadow-lg disabled:bg-gray-300 disabled:cursor-not-allowed"
               >
-                {signing ? "서명 저장 중..." : "✍️  서명하기"}
+                {signing
+                  ? "서명 저장 중..."
+                  : totalPositions > 1
+                  ? `✍️  서명하기 (${totalPositions}곳)`
+                  : "✍️  서명하기"}
               </button>
-              <button
-                onClick={() => setStep("view")}
-                className="w-full mt-2 py-2 text-sm text-gray-400 hover:text-gray-600"
-              >
+              <button onClick={() => setStep("view")} className="w-full mt-2 py-2 text-sm text-gray-400 hover:text-gray-600">
                 계약서 다시 보기
               </button>
             </>

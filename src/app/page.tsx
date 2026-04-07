@@ -18,11 +18,15 @@ function HomeContent() {
   const [pdfPages, setPdfPages] = useState<string[]>([]);
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
-  const [signPosition, setSignPosition] = useState<SignPosition | null>(null);
+
+  // Multiple sign positions
+  const [signPositions, setSignPositions] = useState<SignPosition[]>([]);
+
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Drag state
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
   const [dragRect, setDragRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
@@ -40,18 +44,16 @@ function HomeContent() {
     setFileExt(ext);
     setPdfPages([]);
     setImageDataUrl(null);
-    setSignPosition(null);
+    setSignPositions([]);
 
     const category = getFileCategory(ext);
 
     if (category === "pdf") {
       await renderPdfPreview(selected);
     } else if (category === "image") {
-      const url = URL.createObjectURL(selected);
-      setImageDataUrl(url);
+      setImageDataUrl(URL.createObjectURL(selected));
       setStep("position");
     } else {
-      // DOCX, or any other file — go straight to position step
       setStep("position");
     }
   }
@@ -85,19 +87,32 @@ function HomeContent() {
     }
   }
 
+  /** Returns coords relative to the scrollable container content (not viewport) */
   function getRelativeCoords(clientX: number, clientY: number) {
-    if (!canvasContainerRef.current) return { x: 0, y: 0 };
-    const bounds = canvasContainerRef.current.getBoundingClientRect();
-    return { x: clientX - bounds.left, y: clientY - bounds.top };
+    const el = canvasContainerRef.current;
+    if (!el) return { x: 0, y: 0 };
+    const bounds = el.getBoundingClientRect();
+    return {
+      x: clientX - bounds.left + el.scrollLeft,
+      y: clientY - bounds.top  + el.scrollTop,
+    };
   }
 
-  function finishDrag(rect: { x: number; y: number; width: number; height: number } | null) {
+  function finishDrag(rect: typeof dragRect) {
     if (!rect || rect.width <= 20 || rect.height <= 10) return;
     const el = canvasContainerRef.current;
     const img = el?.querySelector("img");
-    const renderWidth = img?.clientWidth ?? el?.clientWidth ?? 1;
-    const renderHeight = img?.clientHeight ?? el?.clientHeight ?? 1;
-    setSignPosition({ page: currentPage, ...rect, renderWidth, renderHeight });
+    // renderWidth/Height = actual displayed size of the content
+    const renderWidth  = img?.clientWidth  ?? el?.clientWidth  ?? 1;
+    const renderHeight = img?.scrollHeight ?? el?.scrollHeight ?? 1;
+    const newPos: SignPosition = {
+      id: crypto.randomUUID(),
+      page: currentPage,
+      ...rect,
+      renderWidth,
+      renderHeight,
+    };
+    setSignPositions((prev) => [...prev, newPos]);
   }
 
   function handleMouseDown(e: React.MouseEvent) {
@@ -114,7 +129,7 @@ function HomeContent() {
     setDragRect({
       x: Math.min(x, dragStart.x),
       y: Math.min(y, dragStart.y),
-      width: Math.abs(x - dragStart.x),
+      width:  Math.abs(x - dragStart.x),
       height: Math.abs(y - dragStart.y),
     });
   }
@@ -124,9 +139,12 @@ function HomeContent() {
     setIsDragging(false);
     finishDrag(dragRect);
     setDragStart(null);
+    setDragRect(null);
   }
 
   function handleTouchStart(e: React.TouchEvent) {
+    // Only one finger — ignore pinch
+    if (e.touches.length > 1) return;
     e.preventDefault();
     const touch = e.touches[0];
     const { x, y } = getRelativeCoords(touch.clientX, touch.clientY);
@@ -136,13 +154,13 @@ function HomeContent() {
   }
 
   function handleTouchMove(e: React.TouchEvent) {
-    if (!isDragging || !dragStart) return;
+    if (!isDragging || !dragStart || e.touches.length > 1) return;
     const touch = e.touches[0];
     const { x, y } = getRelativeCoords(touch.clientX, touch.clientY);
     setDragRect({
       x: Math.min(x, dragStart.x),
       y: Math.min(y, dragStart.y),
-      width: Math.abs(x - dragStart.x),
+      width:  Math.abs(x - dragStart.x),
       height: Math.abs(y - dragStart.y),
     });
   }
@@ -152,10 +170,15 @@ function HomeContent() {
     setIsDragging(false);
     finishDrag(dragRect);
     setDragStart(null);
+    setDragRect(null);
+  }
+
+  function removePosition(id: string) {
+    setSignPositions((prev) => prev.filter((p) => p.id !== id));
   }
 
   async function handleGenerateLink() {
-    if (!file || !signPosition) return;
+    if (!file || signPositions.length === 0) return;
     setLoading(true);
     setError(null);
 
@@ -166,7 +189,7 @@ function HomeContent() {
         file_url: fileUrl,
         file_name: file.name,
         file_type: fileExt,
-        sign_position: signPosition,
+        sign_positions: signPositions,
       });
       setSessionId(session.id);
       setStep("share");
@@ -181,9 +204,10 @@ function HomeContent() {
     process.env.NEXT_PUBLIC_BASE_URL ||
     (typeof window !== "undefined" ? window.location.origin : "");
   const signUrl = sessionId ? `${baseUrl}/sign/${sessionId}` : "";
-
   const category = getFileCategory(fileExt);
-  const hasPreview = pdfPages.length > 0 || !!imageDataUrl;
+
+  // Positions on the currently viewed page
+  const currentPagePositions = signPositions.filter((p) => p.page === currentPage);
 
   return (
     <main className="max-w-2xl mx-auto px-4 py-8">
@@ -193,10 +217,7 @@ function HomeContent() {
           <h1 className="text-2xl font-bold text-gray-900">SignHere</h1>
           <p className="text-sm text-gray-500 mt-0.5">계약서 전자서명 서비스</p>
         </div>
-        <a
-          href="/dashboard"
-          className="text-sm text-gray-500 hover:text-gray-800 border border-gray-200 rounded-xl px-3 py-1.5 hover:bg-gray-50"
-        >
+        <a href="/dashboard" className="text-sm text-gray-500 hover:text-gray-800 border border-gray-200 rounded-xl px-3 py-1.5 hover:bg-gray-50">
           계약서 관리 →
         </a>
       </div>
@@ -205,16 +226,12 @@ function HomeContent() {
       <div className="flex items-center justify-center gap-2 mb-8">
         {(["upload", "position", "share"] as Step[]).map((s, i) => (
           <div key={s} className="flex items-center gap-2">
-            <div
-              className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold transition-colors ${
-                step === s
-                  ? "bg-blue-600 text-white"
-                  : i < ["upload", "position", "share"].indexOf(step)
-                  ? "bg-green-500 text-white"
-                  : "bg-gray-200 text-gray-500"
-              }`}
-            >
-              {i < ["upload", "position", "share"].indexOf(step) ? "✓" : i + 1}
+            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold transition-colors ${
+              step === s ? "bg-blue-600 text-white"
+              : i < ["upload","position","share"].indexOf(step) ? "bg-green-500 text-white"
+              : "bg-gray-200 text-gray-500"
+            }`}>
+              {i < ["upload","position","share"].indexOf(step) ? "✓" : i + 1}
             </div>
             {i < 2 && <div className="w-8 h-0.5 bg-gray-200" />}
           </div>
@@ -222,9 +239,7 @@ function HomeContent() {
       </div>
 
       {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-600">
-          {error}
-        </div>
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-600">{error}</div>
       )}
 
       {/* Step 1: Upload */}
@@ -238,13 +253,11 @@ function HomeContent() {
               e.preventDefault();
               const dropped = e.dataTransfer.files[0];
               if (dropped) {
-                const input = fileInputRef.current;
-                if (input) {
-                  const dt = new DataTransfer();
-                  dt.items.add(dropped);
-                  input.files = dt.files;
-                  handleFileChange({ target: input } as React.ChangeEvent<HTMLInputElement>);
-                }
+                const input = fileInputRef.current!;
+                const dt = new DataTransfer();
+                dt.items.add(dropped);
+                input.files = dt.files;
+                handleFileChange({ target: input } as React.ChangeEvent<HTMLInputElement>);
               }
             }}
             onDragOver={(e) => e.preventDefault()}
@@ -253,18 +266,8 @@ function HomeContent() {
             <p className="text-gray-600 font-medium">파일을 드래그하거나 클릭하여 선택</p>
             <p className="text-xs text-gray-400 mt-1">모든 파일 형식 지원 (PDF, DOCX, 이미지 등)</p>
           </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            className="hidden"
-            onChange={handleFileChange}
-          />
-
-          {loading && (
-            <div className="mt-4 text-center text-sm text-gray-500 animate-pulse">
-              미리보기 렌더링 중...
-            </div>
-          )}
+          <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileChange} />
+          {loading && <div className="mt-4 text-center text-sm text-gray-500 animate-pulse">미리보기 렌더링 중...</div>}
         </div>
       )}
 
@@ -272,26 +275,22 @@ function HomeContent() {
       {step === "position" && (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
           <h2 className="text-lg font-semibold text-gray-800 mb-1">2. 서명 위치 지정</h2>
-          <p className="text-sm text-gray-500 mb-4">계약서 위에서 드래그하여 서명 위치를 지정하세요</p>
+          <p className="text-sm text-gray-500 mb-1">드래그해서 서명 영역을 지정하세요. 여러 곳 지정 가능합니다.</p>
 
           {/* Page tabs (PDF only) */}
           {category === "pdf" && pdfPages.length > 1 && (
             <div className="flex items-center gap-2 mb-3">
               <span className="text-xs text-gray-500">페이지:</span>
               {pdfPages.map((_, i) => (
-                <button
-                  key={i}
-                  onClick={() => setCurrentPage(i + 1)}
-                  className={`w-7 h-7 rounded text-xs font-medium transition-colors ${
-                    currentPage === i + 1 ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                  }`}
-                >
+                <button key={i} onClick={() => setCurrentPage(i + 1)}
+                  className={`w-7 h-7 rounded text-xs font-medium transition-colors ${currentPage === i + 1 ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
                   {i + 1}
                 </button>
               ))}
             </div>
           )}
 
+          {/* Drag area */}
           <div
             ref={canvasContainerRef}
             className="relative overflow-auto border border-gray-200 rounded-xl cursor-crosshair"
@@ -304,68 +303,74 @@ function HomeContent() {
             onTouchMove={handleTouchMove}
             onTouchEnd={handleTouchEnd}
           >
-            {/* PDF */}
             {category === "pdf" && pdfPages[currentPage - 1] && (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={pdfPages[currentPage - 1]} alt={`페이지 ${currentPage}`} className="w-full select-none pointer-events-none" draggable={false} />
             )}
-
-            {/* Image */}
             {category === "image" && imageDataUrl && (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={imageDataUrl} alt="미리보기" className="w-full select-none pointer-events-none" draggable={false} />
             )}
-
-            {/* DOCX / other: placeholder area */}
             {(category === "docx" || category === "other") && (
-              <div className="flex flex-col items-center justify-center h-64 gap-3 text-gray-400 select-none">
-                <span className="text-5xl">{category === "docx" ? "📝" : "📄"}</span>
-                <p className="text-sm font-medium text-gray-500">{file?.name}</p>
-                <p className="text-xs">미리보기가 지원되지 않는 형식입니다</p>
-                <p className="text-xs text-blue-500">아래 영역을 드래그해서 서명 위치를 지정하세요</p>
+              <div className="flex flex-col items-center justify-center h-64 gap-2 text-gray-400 select-none">
+                <span className="text-4xl">{category === "docx" ? "📝" : "📄"}</span>
+                <p className="text-sm text-gray-500">{file?.name}</p>
+                <p className="text-xs">드래그해서 서명 위치를 지정하세요</p>
               </div>
             )}
 
-            {/* Drag overlay */}
-            {dragRect && dragRect.width > 0 && (
-              <div
-                className="absolute border-2 border-dashed border-blue-500 bg-blue-50/40 rounded pointer-events-none"
-                style={{ left: dragRect.x, top: dragRect.y, width: dragRect.width, height: dragRect.height }}
-              />
+            {/* Live drag rect */}
+            {isDragging && dragRect && dragRect.width > 0 && (
+              <div className="absolute border-2 border-dashed border-blue-400 bg-blue-50/40 rounded pointer-events-none"
+                style={{ left: dragRect.x, top: dragRect.y, width: dragRect.width, height: dragRect.height }} />
             )}
 
-            {/* Confirmed position */}
-            {signPosition && signPosition.page === currentPage && !isDragging && (
-              <div
-                className="absolute border-2 border-blue-500 bg-blue-50/50 rounded pointer-events-none"
-                style={{ left: signPosition.x, top: signPosition.y, width: signPosition.width, height: signPosition.height }}
+            {/* Confirmed positions on current page */}
+            {currentPagePositions.map((pos, idx) => (
+              <div key={pos.id}
+                className="absolute border-2 border-blue-500 bg-blue-50/50 rounded group"
+                style={{ left: pos.x, top: pos.y, width: pos.width, height: pos.height }}
               >
                 <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-xs text-blue-600 font-medium bg-white/90 px-1.5 py-0.5 rounded whitespace-nowrap">
-                  ✍️ 서명 위치
+                  ✍️ {signPositions.indexOf(pos) + 1}
                 </span>
+                {/* Delete button */}
+                <button
+                  onMouseDown={(e) => { e.stopPropagation(); removePosition(pos.id); }}
+                  onTouchStart={(e) => { e.stopPropagation(); removePosition(pos.id); }}
+                  className="absolute -top-2.5 -right-2.5 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center hover:bg-red-600 leading-none z-10"
+                  title="삭제"
+                >
+                  ×
+                </button>
               </div>
-            )}
+            ))}
           </div>
 
-          {signPosition && (
-            <p className="text-xs text-green-600 mt-2">서명 위치가 지정되었습니다.</p>
+          {/* Position list */}
+          {signPositions.length > 0 && (
+            <div className="mt-3 space-y-1">
+              {signPositions.map((pos, idx) => (
+                <div key={pos.id} className="flex items-center justify-between px-3 py-1.5 bg-blue-50 rounded-lg text-xs text-blue-700">
+                  <span>영역 {idx + 1} — {category === "pdf" ? `${pos.page}페이지` : "문서"}</span>
+                  <button onClick={() => removePosition(pos.id)} className="text-red-400 hover:text-red-600 font-medium">
+                    삭제
+                  </button>
+                </div>
+              ))}
+            </div>
           )}
 
           <div className="flex gap-3 mt-5">
-            <button
-              onClick={() => setStep("upload")}
-              className="flex-1 py-2.5 rounded-xl border border-gray-300 text-gray-600 text-sm font-medium hover:bg-gray-50"
-            >
+            <button onClick={() => setStep("upload")} className="flex-1 py-2.5 rounded-xl border border-gray-300 text-gray-600 text-sm font-medium hover:bg-gray-50">
               이전
             </button>
             <button
               onClick={handleGenerateLink}
-              disabled={!signPosition || loading}
-              className={`flex-1 py-2.5 rounded-xl text-white text-sm font-semibold transition-colors ${
-                !signPosition || loading ? "bg-gray-300 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700"
-              }`}
+              disabled={signPositions.length === 0 || loading}
+              className={`flex-1 py-2.5 rounded-xl text-white text-sm font-semibold transition-colors ${signPositions.length === 0 || loading ? "bg-gray-300 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700"}`}
             >
-              {loading ? "생성 중..." : "링크 생성"}
+              {loading ? "생성 중..." : `링크 생성 (영역 ${signPositions.length}개)`}
             </button>
           </div>
         </div>
@@ -377,15 +382,11 @@ function HomeContent() {
           <h2 className="text-lg font-semibold text-gray-800 mb-1">3. 서명 링크 공유</h2>
           <p className="text-sm text-gray-500 mb-6">계약 상대방에게 아래 QR코드 또는 링크를 전달하세요</p>
           <QRDisplay url={signUrl} sessionId={sessionId} />
-
           <div className="mt-6 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700">
             서명이 완료되면{" "}
-            <a href={`/complete/${sessionId}`} className="font-semibold underline">
-              완료 페이지
-            </a>
+            <a href={`/complete/${sessionId}`} className="font-semibold underline">완료 페이지</a>
             에서 서명된 PDF를 다운로드할 수 있습니다.
           </div>
-
           <SessionStatusPoller sessionId={sessionId} />
         </div>
       )}
@@ -422,14 +423,11 @@ function SessionStatusPoller({ sessionId }: { sessionId: string }) {
         <span className="text-green-600 text-lg">✅</span>
         <div>
           <p className="text-sm font-semibold text-green-700">서명 완료!</p>
-          <a href={`/complete/${sessionId}`} className="text-xs text-green-600 underline">
-            서명된 PDF 다운로드
-          </a>
+          <a href={`/complete/${sessionId}`} className="text-xs text-green-600 underline">서명된 PDF 다운로드</a>
         </div>
       </div>
     );
   }
-
   return (
     <div className="mt-4 p-3 bg-gray-50 border border-gray-200 rounded-xl flex items-center gap-2">
       <span className="text-gray-400 text-sm animate-pulse">⏳</span>
