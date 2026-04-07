@@ -105,9 +105,9 @@ export default function SignPage({ params }: Props) {
     const nextIdx = currentSignIdx + 1;
 
     if (nextIdx < totalPositions) {
-      // Move to next sign area
+      // Unmount first (showPad=false), then remount fresh on next frame
       setCurrentSignIdx(nextIdx);
-      setShowPad(true);
+      requestAnimationFrame(() => setShowPad(true));
     } else {
       // All signatures collected — embed and upload
       await finalize(updated);
