@@ -5,12 +5,13 @@ import dynamic from "next/dynamic";
 import { SignPosition } from "@/types/contract";
 import { uploadFile } from "@/lib/storage";
 import { createSession } from "@/lib/session";
+import AdminGuard from "@/components/AdminGuard";
 
 const QRDisplay = dynamic(() => import("@/components/QRDisplay"), { ssr: false });
 
 type Step = "upload" | "position" | "share";
 
-export default function HomePage() {
+function HomeContent() {
   const [step, setStep] = useState<Step>("upload");
   const [file, setFile] = useState<File | null>(null);
   const [fileType, setFileType] = useState<"pdf" | "docx">("pdf");
@@ -423,6 +424,15 @@ export default function HomePage() {
     </main>
   );
 }
+
+export default function HomePage() {
+  return (
+    <AdminGuard>
+      <HomeContent />
+    </AdminGuard>
+  );
+}
+
 
 // Polls session status every 10s to notify when signing is done
 function SessionStatusPoller({ sessionId }: { sessionId: string }) {

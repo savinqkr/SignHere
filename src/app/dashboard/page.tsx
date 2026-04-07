@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import { getSupabase } from "@/lib/supabase";
 import { Session } from "@/types/contract";
 import Link from "next/link";
+import AdminGuard from "@/components/AdminGuard";
 
-export default function DashboardPage() {
+function DashboardContent() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -222,6 +223,15 @@ export default function DashboardPage() {
         </button>
       </div>
     </main>
+  );
+}
+
+
+export default function DashboardPage() {
+  return (
+    <AdminGuard>
+      <DashboardContent />
+    </AdminGuard>
   );
 }
 
