@@ -191,9 +191,17 @@ export default function HomePage() {
   return (
     <main className="max-w-2xl mx-auto px-4 py-8">
       {/* Header */}
-      <div className="mb-8 text-center">
-        <h1 className="text-2xl font-bold text-gray-900">SignHere</h1>
-        <p className="text-sm text-gray-500 mt-1">계약서 전자서명 서비스</p>
+      <div className="mb-8 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">SignHere</h1>
+          <p className="text-sm text-gray-500 mt-0.5">계약서 전자서명 서비스</p>
+        </div>
+        <a
+          href="/dashboard"
+          className="text-sm text-gray-500 hover:text-gray-800 border border-gray-200 rounded-xl px-3 py-1.5 hover:bg-gray-50"
+        >
+          계약서 관리 →
+        </a>
       </div>
 
       {/* Progress */}
