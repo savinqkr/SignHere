@@ -183,9 +183,10 @@ export default function HomePage() {
     }
   }
 
-  const signUrl = sessionId
-    ? `${process.env.NEXT_PUBLIC_BASE_URL}/sign/${sessionId}`
-    : "";
+  const baseUrl =
+    process.env.NEXT_PUBLIC_BASE_URL ||
+    (typeof window !== "undefined" ? window.location.origin : "");
+  const signUrl = sessionId ? `${baseUrl}/sign/${sessionId}` : "";
 
   return (
     <main className="max-w-2xl mx-auto px-4 py-8">
