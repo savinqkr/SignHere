@@ -1,0 +1,457 @@
+"use client";
+
+import { useRef, useState, useCallback, useEffect } from "react";
+import dynamic from "next/dynamic";
+import { SignPosition } from "@/types/contract";
+import { uploadFile } from "@/lib/storage";
+import { createSession } from "@/lib/session";
+
+const QRDisplay = dynamic(() => import("@/components/QRDisplay"), { ssr: false });
+
+type Step = "upload" | "position" | "share";
+
+export default function HomePage() {
+  const [step, setStep] = useState<Step>("upload");
+  const [file, setFile] = useState<File | null>(null);
+  const [fileType, setFileType] = useState<"pdf" | "docx">("pdf");
+  const [pdfPages, setPdfPages] = useState<string[]>([]); // data URLs per page
+  const [currentPage, setCurrentPage] = useState(1);
+  const [signPosition, setSignPosition] = useState<SignPosition | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Drag state
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
+  const [dragRect, setDragRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+
+  const viewerRef = useRef<HTMLDivElement>(null);
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // PDF rendering dimensions for the current page
+  const [pageDimensions, setPageDimensions] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const selected = e.target.files?.[0];
+    if (!selected) return;
+
+    const ext = selected.name.split(".").pop()?.toLowerCase();
+    if (ext !== "pdf" && ext !== "docx") {
+      setError("PDF 또는 DOCX 파일만 지원됩니다.");
+      return;
+    }
+
+    setError(null);
+    setFile(selected);
+    setFileType(ext as "pdf" | "docx");
+
+    if (ext === "pdf") {
+      await renderPdfPreview(selected);
+    }
+  }
+
+  async function renderPdfPreview(pdfFile: File) {
+    setLoading(true);
+    try {
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+
+      const arrayBuffer = await pdfFile.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const pages: string[] = [];
+
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const viewport = page.getViewport({ scale: 1.5 });
+
+        const canvas = document.createElement("canvas");
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+
+        const ctx = canvas.getContext("2d")!;
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        pages.push(canvas.toDataURL());
+
+        if (i === 1) {
+          setPageDimensions({ width: viewport.width, height: viewport.height });
+        }
+      }
+
+      setPdfPages(pages);
+      setStep("position");
+    } catch {
+      setError("PDF 렌더링 중 오류가 발생했습니다.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function getRelativeCoords(clientX: number, clientY: number) {
+    if (!canvasContainerRef.current) return { x: 0, y: 0 };
+    const bounds = canvasContainerRef.current.getBoundingClientRect();
+    return { x: clientX - bounds.left, y: clientY - bounds.top };
+  }
+
+  function handleMouseDown(e: React.MouseEvent) {
+    e.preventDefault();
+    const { x, y } = getRelativeCoords(e.clientX, e.clientY);
+    setDragStart({ x, y });
+    setDragRect({ x, y, width: 0, height: 0 });
+    setIsDragging(true);
+  }
+
+  function handleMouseMove(e: React.MouseEvent) {
+    if (!isDragging || !dragStart) return;
+    const { x, y } = getRelativeCoords(e.clientX, e.clientY);
+    setDragRect({
+      x: Math.min(x, dragStart.x),
+      y: Math.min(y, dragStart.y),
+      width: Math.abs(x - dragStart.x),
+      height: Math.abs(y - dragStart.y),
+    });
+  }
+
+  function handleMouseUp() {
+    if (!isDragging || !dragRect) return;
+    setIsDragging(false);
+    if (dragRect.width > 20 && dragRect.height > 10) {
+      setSignPosition({ page: currentPage, ...dragRect });
+    }
+    setDragStart(null);
+  }
+
+  function handleTouchStart(e: React.TouchEvent) {
+    e.preventDefault();
+    const touch = e.touches[0];
+    const { x, y } = getRelativeCoords(touch.clientX, touch.clientY);
+    setDragStart({ x, y });
+    setDragRect({ x, y, width: 0, height: 0 });
+    setIsDragging(true);
+  }
+
+  function handleTouchMove(e: React.TouchEvent) {
+    if (!isDragging || !dragStart) return;
+    const touch = e.touches[0];
+    const { x, y } = getRelativeCoords(touch.clientX, touch.clientY);
+    setDragRect({
+      x: Math.min(x, dragStart.x),
+      y: Math.min(y, dragStart.y),
+      width: Math.abs(x - dragStart.x),
+      height: Math.abs(y - dragStart.y),
+    });
+  }
+
+  function handleTouchEnd() {
+    if (!isDragging || !dragRect) return;
+    setIsDragging(false);
+    if (dragRect.width > 20 && dragRect.height > 10) {
+      setSignPosition({ page: currentPage, ...dragRect });
+    }
+    setDragStart(null);
+  }
+
+  async function handleGenerateLink() {
+    if (!file || !signPosition) return;
+    setLoading(true);
+    setError(null);
+
+    try {
+      // Upload file first with a temp id
+      const tempId = crypto.randomUUID();
+      const fileUrl = await uploadFile(file, tempId);
+
+      // Create session
+      const session = await createSession({
+        file_url: fileUrl,
+        file_name: file.name,
+        file_type: fileType,
+        sign_position: {
+          ...signPosition,
+          // store canvas render dimensions so we can scale correctly on sign page
+          // width/height stored as rendered px values
+        },
+      });
+
+      setSessionId(session.id);
+      setStep("share");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "링크 생성 중 오류가 발생했습니다.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const signUrl = sessionId
+    ? `${process.env.NEXT_PUBLIC_BASE_URL}/sign/${sessionId}`
+    : "";
+
+  return (
+    <main className="max-w-2xl mx-auto px-4 py-8">
+      {/* Header */}
+      <div className="mb-8 text-center">
+        <h1 className="text-2xl font-bold text-gray-900">SignHere</h1>
+        <p className="text-sm text-gray-500 mt-1">계약서 전자서명 서비스</p>
+      </div>
+
+      {/* Progress */}
+      <div className="flex items-center justify-center gap-2 mb-8">
+        {(["upload", "position", "share"] as Step[]).map((s, i) => (
+          <div key={s} className="flex items-center gap-2">
+            <div
+              className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold transition-colors ${
+                step === s
+                  ? "bg-blue-600 text-white"
+                  : i < ["upload", "position", "share"].indexOf(step)
+                  ? "bg-green-500 text-white"
+                  : "bg-gray-200 text-gray-500"
+              }`}
+            >
+              {i < ["upload", "position", "share"].indexOf(step) ? "✓" : i + 1}
+            </div>
+            {i < 2 && <div className="w-8 h-0.5 bg-gray-200" />}
+          </div>
+        ))}
+      </div>
+
+      {error && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-600">
+          {error}
+        </div>
+      )}
+
+      {/* Step 1: Upload */}
+      {step === "upload" && (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+          <h2 className="text-lg font-semibold text-gray-800 mb-4">1. 계약서 업로드</h2>
+          <div
+            className="border-2 border-dashed border-gray-300 rounded-xl p-10 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/30 transition-colors"
+            onClick={() => fileInputRef.current?.click()}
+            onDrop={(e) => {
+              e.preventDefault();
+              const dropped = e.dataTransfer.files[0];
+              if (dropped) {
+                const input = fileInputRef.current;
+                if (input) {
+                  const dt = new DataTransfer();
+                  dt.items.add(dropped);
+                  input.files = dt.files;
+                  handleFileChange({ target: input } as React.ChangeEvent<HTMLInputElement>);
+                }
+              }
+            }}
+            onDragOver={(e) => e.preventDefault()}
+          >
+            <div className="text-4xl mb-3">📄</div>
+            <p className="text-gray-600 font-medium">파일을 드래그하거나 클릭하여 선택</p>
+            <p className="text-xs text-gray-400 mt-1">PDF, DOCX 지원</p>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,.docx"
+            className="hidden"
+            onChange={handleFileChange}
+          />
+
+          {loading && (
+            <div className="mt-4 text-center text-sm text-gray-500 animate-pulse">
+              PDF 렌더링 중...
+            </div>
+          )}
+
+          {file && !loading && fileType === "docx" && (
+            <div className="mt-4 flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-200">
+              <span className="text-sm text-gray-700 truncate">{file.name}</span>
+              <button
+                onClick={() => setStep("position")}
+                className="ml-3 shrink-0 bg-blue-600 text-white text-sm px-4 py-1.5 rounded-lg hover:bg-blue-700"
+              >
+                다음
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Step 2: Position */}
+      {step === "position" && (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+          <h2 className="text-lg font-semibold text-gray-800 mb-1">2. 서명 위치 지정</h2>
+          <p className="text-sm text-gray-500 mb-4">계약서 위에서 드래그하여 서명 위치를 지정하세요</p>
+
+          {fileType === "pdf" && pdfPages.length > 1 && (
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-xs text-gray-500">페이지:</span>
+              {pdfPages.map((_, i) => (
+                <button
+                  key={i}
+                  onClick={() => setCurrentPage(i + 1)}
+                  className={`w-7 h-7 rounded text-xs font-medium transition-colors ${
+                    currentPage === i + 1
+                      ? "bg-blue-600 text-white"
+                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  }`}
+                >
+                  {i + 1}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div
+            ref={canvasContainerRef}
+            className="relative overflow-auto border border-gray-200 rounded-xl cursor-crosshair"
+            style={{ maxHeight: "60vh" }}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+          >
+            {fileType === "pdf" && pdfPages[currentPage - 1] ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={pdfPages[currentPage - 1]}
+                alt={`페이지 ${currentPage}`}
+                className="w-full select-none pointer-events-none"
+                draggable={false}
+              />
+            ) : (
+              <div className="p-8 text-center text-gray-400 text-sm">
+                DOCX 문서 — 서명 위치를 드래그로 지정하세요
+                <div className="mt-2 bg-gray-50 border border-dashed border-gray-200 rounded-lg h-48 flex items-center justify-center text-gray-300 text-xs">
+                  문서 영역 (실제 크기 기준으로 위치 지정)
+                </div>
+              </div>
+            )}
+
+            {/* Drag overlay */}
+            {dragRect && dragRect.width > 0 && (
+              <div
+                className="absolute border-2 border-dashed border-blue-500 bg-blue-50/40 rounded pointer-events-none"
+                style={{
+                  left: dragRect.x,
+                  top: dragRect.y,
+                  width: dragRect.width,
+                  height: dragRect.height,
+                }}
+              />
+            )}
+
+            {/* Confirmed position */}
+            {signPosition && signPosition.page === currentPage && !isDragging && (
+              <div
+                className="absolute border-2 border-blue-500 bg-blue-50/50 rounded pointer-events-none"
+                style={{
+                  left: signPosition.x,
+                  top: signPosition.y,
+                  width: signPosition.width,
+                  height: signPosition.height,
+                }}
+              >
+                <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-xs text-blue-600 font-medium bg-white/90 px-1.5 py-0.5 rounded whitespace-nowrap">
+                  ✍️ 서명 위치
+                </span>
+              </div>
+            )}
+          </div>
+
+          {signPosition && (
+            <p className="text-xs text-green-600 mt-2">
+              페이지 {signPosition.page}에 서명 위치가 지정되었습니다.
+            </p>
+          )}
+
+          <div className="flex gap-3 mt-5">
+            <button
+              onClick={() => setStep("upload")}
+              className="flex-1 py-2.5 rounded-xl border border-gray-300 text-gray-600 text-sm font-medium hover:bg-gray-50"
+            >
+              이전
+            </button>
+            <button
+              onClick={handleGenerateLink}
+              disabled={!signPosition || loading}
+              className={`flex-1 py-2.5 rounded-xl text-white text-sm font-semibold transition-colors ${
+                !signPosition || loading
+                  ? "bg-gray-300 cursor-not-allowed"
+                  : "bg-blue-600 hover:bg-blue-700"
+              }`}
+            >
+              {loading ? "생성 중..." : "링크 생성"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 3: Share */}
+      {step === "share" && sessionId && (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+          <h2 className="text-lg font-semibold text-gray-800 mb-1">3. 서명 링크 공유</h2>
+          <p className="text-sm text-gray-500 mb-6">
+            계약 상대방에게 아래 QR코드 또는 링크를 전달하세요
+          </p>
+          <QRDisplay url={signUrl} sessionId={sessionId} />
+
+          <div className="mt-6 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700">
+            서명이 완료되면 이 페이지에서 상태를 확인하거나{" "}
+            <a
+              href={`/complete/${sessionId}`}
+              className="font-semibold underline"
+            >
+              완료 페이지
+            </a>
+            에서 서명된 PDF를 다운로드할 수 있습니다.
+          </div>
+
+          <SessionStatusPoller sessionId={sessionId} />
+        </div>
+      )}
+    </main>
+  );
+}
+
+// Polls session status every 10s to notify when signing is done
+function SessionStatusPoller({ sessionId }: { sessionId: string }) {
+  const [status, setStatus] = useState<"pending" | "signed">("pending");
+
+  const poll = useCallback(async () => {
+    const { getSession } = await import("@/lib/session");
+    const session = await getSession(sessionId);
+    if (session?.status === "signed") setStatus("signed");
+  }, [sessionId]);
+
+  useEffect(() => {
+    const interval = setInterval(poll, 10000);
+    poll();
+    return () => clearInterval(interval);
+  }, [poll]);
+
+  if (status === "signed") {
+    return (
+      <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-xl flex items-center gap-2">
+        <span className="text-green-600 text-lg">✅</span>
+        <div>
+          <p className="text-sm font-semibold text-green-700">서명 완료!</p>
+          <a
+            href={`/complete/${sessionId}`}
+            className="text-xs text-green-600 underline"
+          >
+            서명된 PDF 다운로드
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 p-3 bg-gray-50 border border-gray-200 rounded-xl flex items-center gap-2">
+      <span className="text-gray-400 text-sm animate-pulse">⏳</span>
+      <p className="text-xs text-gray-500">서명 대기 중... (자동 갱신)</p>
+    </div>
+  );
+}
