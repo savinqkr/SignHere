@@ -38,7 +38,7 @@ export default function SignaturePad({ onSave, onClose, label }: SignaturePadPro
       }
 
       padRef.current = new SignaturePadLib(canvas, {
-        backgroundColor: "rgb(255, 255, 255)",
+        backgroundColor: "rgba(0,0,0,0)",
         penColor: "rgb(10, 10, 10)",
         minWidth: 1.5,
         maxWidth: 4,
@@ -105,9 +105,14 @@ export default function SignaturePad({ onSave, onClose, label }: SignaturePadPro
         </button>
       </div>
 
-      {/* Canvas */}
-      <div className="flex-1 relative">
-        <p className="absolute top-4 left-1/2 -translate-x-1/2 text-gray-300 text-sm select-none pointer-events-none z-10 whitespace-nowrap">
+      {/* Canvas — checkerboard background shows transparency */}
+      <div className="flex-1 relative" style={{
+        backgroundImage: "linear-gradient(45deg,#e5e7eb 25%,transparent 25%),linear-gradient(-45deg,#e5e7eb 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#e5e7eb 75%),linear-gradient(-45deg,transparent 75%,#e5e7eb 75%)",
+        backgroundSize: "16px 16px",
+        backgroundPosition: "0 0,0 8px,8px -8px,-8px 0",
+        backgroundColor: "#f9fafb",
+      }}>
+        <p className="absolute top-4 left-1/2 -translate-x-1/2 text-gray-400 text-sm select-none pointer-events-none z-10 whitespace-nowrap">
           이 곳에 서명해 주세요
         </p>
         <canvas
