@@ -61,7 +61,7 @@ function DashboardContent() {
           <p className="text-sm text-gray-500 mt-0.5">등록된 계약서와 서명 현황을 확인하세요</p>
         </div>
         <Link
-          href="/"
+          href="/upload"
           className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-xl hover:bg-blue-700"
         >
           + 새 계약서
@@ -91,7 +91,7 @@ function DashboardContent() {
         <div className="text-center py-20">
           <p className="text-4xl mb-3">📄</p>
           <p className="text-gray-500 font-medium">등록된 계약서가 없습니다</p>
-          <Link href="/" className="mt-4 inline-block text-sm text-blue-600 underline">
+          <Link href="/upload" className="mt-4 inline-block text-sm text-blue-600 underline">
             첫 계약서 업로드하기
           </Link>
         </div>

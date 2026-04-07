@@ -70,7 +70,7 @@ export default function CompletePage({ params }: Props) {
       <div className="flex items-center justify-center min-h-screen px-4">
         <div className="text-center">
           <p className="text-red-500 font-medium">{error}</p>
-          <Link href="/" className="mt-4 inline-block text-sm text-blue-600 underline">
+          <Link href="/dashboard" className="mt-4 inline-block text-sm text-blue-600 underline">
             처음으로
           </Link>
         </div>
@@ -141,7 +141,7 @@ export default function CompletePage({ params }: Props) {
             )}
 
             <Link
-              href="/"
+              href="/dashboard"
               className="w-full py-3 border border-gray-300 text-gray-600 font-medium rounded-xl text-sm hover:bg-gray-50 transition-colors block"
             >
               새 계약서 업로드
