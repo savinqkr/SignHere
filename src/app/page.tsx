@@ -38,7 +38,13 @@ function HomeContent() {
     const selected = e.target.files?.[0];
     if (!selected) return;
 
-    const ext = selected.name.split(".").pop()?.toLowerCase() ?? "bin";
+    const ext = selected.name.split(".").pop()?.toLowerCase() ?? "";
+    if (ext !== "pdf" && ext !== "docx") {
+      setError("PDF 또는 DOCX 파일만 지원됩니다.");
+      e.target.value = "";
+      return;
+    }
+
     setError(null);
     setFile(selected);
     setFileExt(ext);
@@ -46,13 +52,8 @@ function HomeContent() {
     setImageDataUrl(null);
     setSignPositions([]);
 
-    const category = getFileCategory(ext);
-
-    if (category === "pdf") {
+    if (ext === "pdf") {
       await renderPdfPreview(selected);
-    } else if (category === "image") {
-      setImageDataUrl(URL.createObjectURL(selected));
-      setStep("position");
     } else {
       setStep("position");
     }
@@ -264,9 +265,9 @@ function HomeContent() {
           >
             <div className="text-4xl mb-3">📂</div>
             <p className="text-gray-600 font-medium">파일을 드래그하거나 클릭하여 선택</p>
-            <p className="text-xs text-gray-400 mt-1">모든 파일 형식 지원 (PDF, DOCX, 이미지 등)</p>
+            <p className="text-xs text-gray-400 mt-1">PDF, DOCX 지원</p>
           </div>
-          <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileChange} />
+          <input ref={fileInputRef} type="file" accept=".pdf,.docx" className="hidden" onChange={handleFileChange} />
           {loading && <div className="mt-4 text-center text-sm text-gray-500 animate-pulse">미리보기 렌더링 중...</div>}
         </div>
       )}
